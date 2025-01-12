@@ -3,12 +3,12 @@
 import React, { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { register } from "@/store/auth/action"; // Adjust the path as needed
-import { RootState } from "../store/store";
+import { RootState, AppDispatch } from "@/store/store"; // Adjust the path as needed
 import Link from "next/link";
 import Image from "next/image";
 
 const Register: React.FC = () => {
-  const dispatch = useDispatch();
+  const dispatch: AppDispatch = useDispatch();
   const { loading, error } = useSelector((state: RootState) => state.auth);
 
   const [formData, setFormData] = useState({
@@ -33,7 +33,7 @@ const Register: React.FC = () => {
   return (
     <div className="flex flex-col md:flex-row h-screen bg-gray-50">
       {/* Left Section */}
-      <div className="flex-1 bg-purple-200 flex flex-col items-center justify-center p-6">
+      <div className="flex-1 bg-green-200 flex flex-col items-center justify-center p-4">
         <Image
           src="/heroimage.png" // Ensure this path is correct
           alt="Illustration"
@@ -41,7 +41,7 @@ const Register: React.FC = () => {
           height={500}
           className="max-w-md"
         />
-        <h2 className="text-2xl font-bold mt-6 text-gray-800">
+        <h2 className="text-2xl font-mono  font-bold mt-2 text-green-900">
           CoinXcel Trading Simulator
         </h2>
       </div>

@@ -1,136 +1,124 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import axios from "axios";
-import { ACCESS_TOKEN, REFRESH_TOKEN } from "@/lib/constant";
-import api from "@/lib/api";
+
+import React, { useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { login } from "@/store/auth/action"; // Adjust the path as needed
+import { RootState, AppDispatch } from "@/store/store"; // Adjust the path as needed
 import Link from "next/link";
+import Image from "next/image";
 
-interface SignInFormData {
-  username: string;
-  password: string;
-}
+const Login: React.FC = () => {
+  const dispatch: AppDispatch = useDispatch();
+  const { loading, error } = useSelector((state: RootState) => state.auth);
 
-const SignInPage: React.FC = () => {
-  const [formData, setFormData] = useState<SignInFormData>({
-    username: "",
+  const [formData, setFormData] = useState({
+    email: "",
     password: "",
   });
 
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const router = useRouter();
-
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData({
-      ...formData,
-      [name]: value,
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      // Send login request to the backend
-      const response = await api.post("/api/token/", formData);
-
-      if (response.status === 200) {
-        const { access, refresh } = response.data;
-
-        // Save tokens to localStorage
-        localStorage.setItem(ACCESS_TOKEN, access);
-        localStorage.setItem(REFRESH_TOKEN, refresh);
-
-        // Redirect to dashboard or home page
-        router.push("/dashboard");
-      }
-    } catch (err) {
-      setLoading(false);
-      if (axios.isAxiosError(err) && err.response) {
-        setError(err.response.data.detail || "Invalid credentials");
-      } else {
-        setError("An unexpected error occurred");
-      }
+    if (formData.email && formData.password) {
+      dispatch(login(formData));
+    } else {
+      alert("Please fill in all fields.");
     }
   };
 
   return (
-    <div className="flex min-h-screen">
-      {/* Left side illustration */}
-      <div className="flex-1 bg-purple-200 flex flex-col items-center justify-center p-6">
-        <img
-          src="Hero_image.png" // Replace with the path to your illustration image
+    <div className="flex flex-col md:flex-row h-screen bg-gray-50">
+      {/* Left Section */}
+      <div className="flex-1 bg-green-200 flex flex-col items-center justify-center p-4">
+        <Image
+          src="/heroimage.png" // Ensure this path is correct
           alt="Illustration"
+          width={500}
+          height={500}
           className="max-w-md"
         />
-        <h2 className="text-2xl font-bold mt-6">Automated Grading System</h2>
-        <p className="text-center mt-2 text-gray-700">
-          "Empower your grading journey with precision and purpose"
-        </p>
+        <h2 className="text-2xl font-mono font-bold mt-2 text-green-900">
+          CoinXcel Trading Simulator
+        </h2>
       </div>
 
-      {/* Right side sign-in form */}
-      <div className="flex-1 flex items-center justify-center bg-white">
-        <div className="max-w-md w-full p-8 shadow-lg rounded-lg">
-          <h1 className="text-3xl font-semibold text-center mb-6">Sign In</h1>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="flex flex-col">
-              <label htmlFor="username" className="text-lg font-medium">
-                Username:
+      {/* Right Section */}
+      <div className="flex-1 flex items-center justify-center p-10 bg-white h-full overflow-y-auto">
+        <div className="w-full max-w-md">
+          <h2 className="text-3xl font-semibold text-center mb-6 text-gray-800">
+            Login
+          </h2>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <label
+                htmlFor="email"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Email Address
               </label>
               <input
-                type="text"
-                id="username"
-                name="username"
-                value={formData.username}
+                id="email"
+                type="email"
+                name="email"
+                value={formData.email}
                 onChange={handleChange}
-                className="mt-2 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-purple-500"
                 required
+                placeholder="you@example.com"
+                className="mt-1 block w-full border-gray-300 rounded-lg shadow-sm focus:ring-purple-500 focus:border-purple-500"
               />
             </div>
-
-            <div className="flex flex-col">
-              <label htmlFor="password" className="text-lg font-medium">
-                Password:
+            <div>
+              <label
+                htmlFor="password"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Password
               </label>
               <input
-                type="password"
                 id="password"
+                type="password"
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
-                className="mt-2 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-purple-500"
                 required
+                placeholder="Enter your password"
+                className="mt-1 block w-full border-gray-300 rounded-lg shadow-sm focus:ring-purple-500 focus:border-purple-500"
               />
             </div>
 
-            {error && <p className="text-red-500 text-sm">{error}</p>}
+            {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
+
             <button
               type="submit"
-              className="w-full mt-4 p-3 bg-purple-500 text-white font-semibold rounded-lg hover:bg-purple-600 focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
+              className="w-full py-3 bg-purple-500 text-white font-semibold rounded-lg hover:bg-purple-600 focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
               disabled={loading}
             >
-              {loading ? "Signing In..." : "Sign In"}
+              {loading ? "Logging In..." : "Log In"}
             </button>
-
-            <div className="text-center mt-4">
-              <p className="text-sm text-gray-500">or</p>
-              <button
-                type="button"
-                className="mt-2 p-3 border border-gray-300 rounded-lg w-full flex items-center justify-center space-x-2"
-              >
-                <img src="GoogleIcon.png" alt="Google Icon" className="w-5" />
-                <span>Sign In with Google</span>
-              </button>
-            </div>
           </form>
-          <p className="text-sm  text-center mt-4">
-            Are you new to AutoGradePro?{" "}
+
+          <div className="text-center mt-6">
+            <p className="text-sm text-gray-500">or</p>
+            <button
+              type="button"
+              className="mt-4 p-3 border border-gray-300 rounded-lg w-full flex items-center justify-center space-x-2"
+            >
+              <Image
+                src="/GoogleIcon.png" // Replace with the correct path
+                alt="Google Icon"
+                width={20}
+                height={20}
+                className="mr-2"
+              />
+              <span>Log In with Google</span>
+            </button>
+          </div>
+
+          <p className="text-sm text-center mt-4">
+            `Don't have an account?`
             <Link
               href="/sign-up"
               className="text-purple-500 hover:underline font-medium"
@@ -144,4 +132,4 @@ const SignInPage: React.FC = () => {
   );
 };
 
-export default SignInPage;
+export default Login;
