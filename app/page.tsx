@@ -5,7 +5,7 @@ import Hero from "./_components/Hero";
 
 export default function Home() {
   return (
-    <div className="min-h-screen flex flex-col bg-gray-200">
+    <div className="min-h-screen flex flex-col bg-green-200">
       {/* Header */}
       <Header />
       {/* Hero Section */}

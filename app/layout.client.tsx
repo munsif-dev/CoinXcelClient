@@ -11,7 +11,7 @@ export default function RootClientLayout({
 }) {
   return (
     <Provider store={store}>
-      <div className="bg-white">{children}</div>
+      <div className="">{children}</div>
     </Provider>
   );
 }

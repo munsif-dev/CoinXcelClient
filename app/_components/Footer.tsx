@@ -2,7 +2,7 @@ import React from "react";
 
 const Footer = () => {
   return (
-    <div className="w-full bg-[#1e1e2f] pt-11 pb-5 flex items-end justify-center">
+    <div className="w-full bg-green-950 pt-11 pb-5 flex items-end justify-center">
       <div className="w-[1274px] h-[289px] relative">
         {/* Branding Section */}
         <div className="h-[180px] left-0 top-0 absolute">
