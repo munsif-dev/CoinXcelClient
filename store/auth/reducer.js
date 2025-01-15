@@ -15,6 +15,7 @@ const initialState = {
   jwt: null,
   loading: false,
   error: null,
+  success: false,
 };
 
 const authReducer = (state = initialState, action) => {
@@ -33,6 +34,7 @@ const authReducer = (state = initialState, action) => {
         ...state,
         loading: false,
         jwt: action.payload,
+        success: true,
       };
 
     case GET_USER_SUCCESS:

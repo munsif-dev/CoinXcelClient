@@ -1,27 +1,36 @@
 import axios from "axios";
+
 export const register = (userData) => async (dispatch) => {
   const baseurl = "http://localhost:5456";
   dispatch({ type: "REGISTER_REQUEST" });
+
   try {
     const response = await axios.post(`${baseurl}/auth/register`, userData);
     const user = response.data;
     dispatch({ type: "REGISTER_SUCCESS", payload: user.jwt });
     localStorage.setItem("jwt", user.jwt);
+
+    alert("User registered successfully");
   } catch (error) {
     dispatch({ type: "REGISTER_FAILURE", payload: error.message });
+    alert("User registration failed");
   }
 };
 
 export const login = (userData) => async (dispatch) => {
   const baseurl = "http://localhost:5456";
   dispatch({ type: "LOGIN_REQUEST" });
+
   try {
     const response = await axios.post(`${baseurl}/auth/login`, userData);
     const user = response.data;
     dispatch({ type: "LOGIN_SUCCESS", payload: user.jwt });
+
     localStorage.setItem("jwt", user.jwt);
+    alert("User logged in successfully");
   } catch (error) {
     dispatch({ type: "LOGIN_FAILURE", payload: error.message });
+    alert("User login failed");
   }
 };
 

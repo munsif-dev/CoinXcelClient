@@ -1,17 +1,20 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { login } from "@/store/auth/action"; // Adjust the path as needed
 import { RootState, AppDispatch } from "@/store/store"; // Adjust the path as needed
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter } from "next/navigation"; // Import useRouter
 
 const Login: React.FC = () => {
   const dispatch: AppDispatch = useDispatch();
-  const { loading, error } = useSelector((state: RootState) => state.auth);
-  const router = useRouter();
+  const { loading, error, success } = useSelector(
+    (state: RootState) => state.auth
+  );
+
+  const router = useRouter(); // Initialize the router
 
   const [formData, setFormData] = useState({
     email: "",
@@ -26,11 +29,17 @@ const Login: React.FC = () => {
     e.preventDefault();
     if (formData.email && formData.password) {
       dispatch(login(formData));
-      router.push("/dashboard");
     } else {
       alert("Please fill in all fields.");
     }
   };
+
+  // Effect to navigate after successful registration
+  useEffect(() => {
+    if (success) {
+      router.push("/dashboard"); // Navigate to the login page if registration is successful
+    }
+  }, [success, router]); // Trigger the effect when 'success' changes
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-green-50">
@@ -52,7 +61,7 @@ const Login: React.FC = () => {
       <div className="flex-1 flex items-center justify-center p-10 bg-white h-full overflow-y-auto">
         <div className="w-full max-w-md">
           <h2 className="text-3xl font-semibold text-center text-black mb-6">
-            Log-In to get started
+            Log-In
           </h2>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>

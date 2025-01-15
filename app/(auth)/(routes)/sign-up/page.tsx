@@ -1,15 +1,19 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { register } from "@/store/auth/action"; // Adjust the path as needed
 import { RootState, AppDispatch } from "@/store/store"; // Adjust the path as needed
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation"; // Import useRouter
 
 const Register: React.FC = () => {
   const dispatch: AppDispatch = useDispatch();
-  const { loading, error } = useSelector((state: RootState) => state.auth);
+  const { loading, error, success } = useSelector(
+    (state: RootState) => state.auth
+  );
+  const router = useRouter(); // Initialize the router
 
   const [formData, setFormData] = useState({
     fullname: "",
@@ -24,11 +28,18 @@ const Register: React.FC = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (formData.fullname && formData.email && formData.password) {
-      dispatch(register(formData));
+      dispatch(register(formData)); // Dispatch the register action
     } else {
       alert("Please fill in all fields.");
     }
   };
+
+  // Effect to navigate after successful registration
+  useEffect(() => {
+    if (success) {
+      router.push("/sign-in"); // Navigate to the login page if registration is successful
+    }
+  }, [success, router]); // Trigger the effect when 'success' changes
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-green-50">
