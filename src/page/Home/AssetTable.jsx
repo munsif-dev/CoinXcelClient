@@ -1,6 +1,16 @@
-import React from 'react'
+import React from 'react';
+import {Avatar, AvatarImage} from "@/components/ui/avatar";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TbleHeader,
+  TableRow,
+} from "@/component/ui/table";
 
-function AssetTable() {
+const AssetTable = () => {
   return (
     <Table>
  
@@ -35,7 +45,7 @@ function AssetTable() {
   </TableBody>
 </Table>
 
-  )
-}
+  );
+};
 
-export default AssetTable
+export default AssetTable;
