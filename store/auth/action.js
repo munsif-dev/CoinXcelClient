@@ -1,7 +1,7 @@
 import axios from "axios";
 
 export const register = (userData) => async (dispatch) => {
-  const baseurl = "http://localhost:5456";
+  const baseurl = "http://springboot:8080";
   dispatch({ type: "REGISTER_REQUEST" });
 
   try {
@@ -18,7 +18,7 @@ export const register = (userData) => async (dispatch) => {
 };
 
 export const login = (userData) => async (dispatch) => {
-  const baseurl = "http://localhost:5456";
+  const baseurl = "http://springboot:8080";
   dispatch({ type: "LOGIN_REQUEST" });
 
   try {
@@ -35,7 +35,7 @@ export const login = (userData) => async (dispatch) => {
 };
 
 export const getUser = (jwt) => async (dispatch) => {
-  const baseurl = "http://localhost:5456";
+  const baseurl = "http://springboot:8080";
   dispatch({ type: "GET_USER_REQUEST" });
   try {
     const response = await axios.get(`${baseurl}/api/users/profile`, {
