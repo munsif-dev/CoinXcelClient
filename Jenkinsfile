@@ -272,7 +272,7 @@ pipeline {
                     '''
                     
                     // Initialize Terraform with -upgrade flag to ensure latest providers
-                    sh 'cd terraform && terraform init -upgrade'
+                    sh 'cd terraform && terraform init'
                     
                     // Check if we already have a frontend instance
                     script {
