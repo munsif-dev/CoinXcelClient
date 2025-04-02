@@ -15,6 +15,7 @@ pipeline {
         API_BASE_URL = 'http://44.212.40.132:8080' // Backend API URL - using your backend EC2 IP
         TERRAFORM_STATE_KEY = 'coinxcel-frontend-terraform.tfstate' // S3 key for storing terraform state
         NODE_VERSION = '18' // Updated to use Node.js 18 instead of 16
+        AWS_DEFAULT_REGION = 'us-east-1' // Add default AWS region
     }
     
     stages {
@@ -278,6 +279,7 @@ pipeline {
                         def existingInstanceId = sh(
                             script: '''
                                 aws ec2 describe-instances \
+                                --region ${AWS_DEFAULT_REGION} \
                                 --filters "Name=tag:Name,Values=coinxcel-frontend" "Name=instance-state-name,Values=running" \
                                 --query "Reservations[].Instances[].InstanceId" \
                                 --output text
@@ -311,6 +313,7 @@ pipeline {
                         // Get the public IP of the instance using AWS CLI rather than Terraform output
                         sh '''
                             EC2_PUBLIC_IP=$(aws ec2 describe-instances \
+                                --region ${AWS_DEFAULT_REGION} \
                                 --filters "Name=tag:Name,Values=coinxcel-frontend" "Name=instance-state-name,Values=running" \
                                 --query "Reservations[].Instances[].PublicIpAddress" \
                                 --output text)
