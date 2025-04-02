@@ -2,7 +2,9 @@ pipeline {
     agent any
     
     tools {
-        nodejs 'NodeJS' // Make sure you have NodeJS configured in Jenkins
+        // Using standard Maven and JDK tools instead of NodeJS
+        maven 'M3'
+        jdk 'JDK'
     }
     
     environment {
@@ -144,6 +146,8 @@ pipeline {
                           - lsb-release
                           - apt-transport-https
                           - python3-docker
+                          - nodejs
+                          - npm
                         state: present
                 
                     - name: Create keyrings directory
@@ -420,7 +424,17 @@ pipeline {
         
         stage('Install Dependencies') {
             steps {
-                sh 'npm install'
+                // Install Node.js and npm if not present on the Jenkins agent
+                sh '''
+                    # Check if Node.js is installed, if not install it
+                    if ! command -v node &> /dev/null; then
+                        curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+                        sudo apt-get install -y nodejs
+                    fi
+                    
+                    # Install npm dependencies
+                    npm install
+                '''
             }
         }
         
@@ -458,7 +472,6 @@ pipeline {
                     
                     // Check if we already have a frontend instance
                     script {
-                        // Try to capture the instance ID if it exists
                         def existingInstanceId = sh(
                             script: '''
                                 aws ec2 describe-instances \
@@ -478,15 +491,22 @@ pipeline {
                             // Import the existing instance into Terraform state
                             sh "cd terraform && terraform import aws_instance.frontend ${existingInstanceId}"
                         }
+                        
+                        // Get the public IP of the instance using AWS CLI rather than Terraform output
+                        sh '''
+                            EC2_PUBLIC_IP=$(aws ec2 describe-instances \
+                                --filters "Name=tag:Name,Values=coinxcel-frontend" "Name=instance-state-name,Values=running" \
+                                --query "Reservations[].Instances[].PublicIpAddress" \
+                                --output text)
+                            echo "EC2_PUBLIC_IP=${EC2_PUBLIC_IP}" > ec2.properties
+                        '''
+                        
+                        // Load the properties file to make the EC2_PUBLIC_IP available
+                        def props = readProperties file: 'ec2.properties'
+                        env.EC2_PUBLIC_IP = props.EC2_PUBLIC_IP
+                        
+                        echo "Frontend EC2 Public IP: ${env.EC2_PUBLIC_IP}"
                     }
-                    
-                    // Get the public IP of the instance
-                    env.EC2_PUBLIC_IP = sh(
-                        script: 'cd terraform && terraform output -raw frontend_public_ip || aws ec2 describe-instances --filters "Name=tag:Name,Values=coinxcel-frontend" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].PublicIpAddress" --output text',
-                        returnStdout: true
-                    ).trim()
-                    
-                    echo "Frontend EC2 Public IP: ${env.EC2_PUBLIC_IP}"
                 }
             }
         }
@@ -494,18 +514,18 @@ pipeline {
         stage('Create Ansible Inventory') {
             steps {
                 // Create Ansible inventory file
-                sh """
+                sh '''
                     mkdir -p ansible
                     cat > ansible/hosts << EOF
 [frontend_servers]
-${env.EC2_PUBLIC_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes'
+${EC2_PUBLIC_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes'
 
 [frontend_servers:vars]
 ansible_python_interpreter=/usr/bin/python3
 ansible_become=yes
 ansible_become_method=sudo
 EOF
-                """
+                '''
                 
                 // Display inventory
                 sh 'cat ansible/hosts'
@@ -529,10 +549,10 @@ EOF
                         sh 'chmod 600 /tmp/ec2_key.pem'
                         
                         // Test SSH connectivity to EC2 instance
-                        sh """
-                            echo "Testing SSH connectivity to ${env.EC2_PUBLIC_IP}..."
-                            ssh -i /tmp/ec2_key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${env.EC2_PUBLIC_IP} 'echo "SSH connection successful"'
-                        """
+                        sh '''
+                            echo "Testing SSH connectivity to ${EC2_PUBLIC_IP}..."
+                            ssh -i /tmp/ec2_key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${EC2_PUBLIC_IP} 'echo "SSH connection successful"'
+                        '''
                         
                         // Install Docker on EC2
                         sh 'ANSIBLE_DEBUG=1 ansible-playbook -i ansible/hosts ansible/install-docker.yml -v'
@@ -558,12 +578,14 @@ EOF
                 // Verify deployment by checking HTTP response
                 script {
                     def response = sh(
-                        script: "curl -s -o /dev/null -w '%{http_code}' http://${env.EC2_PUBLIC_IP}",
+                        script: '''
+                            curl -s -o /dev/null -w "%{http_code}" http://${EC2_PUBLIC_IP} || echo "Failed to connect"
+                        ''',
                         returnStdout: true
                     ).trim()
                     
                     if (response == '200') {
-                        echo "Frontend successfully deployed and accessible at http://${env.EC2_PUBLIC_IP}"
+                        echo "Frontend successfully deployed and accessible at http://${EC2_PUBLIC_IP}"
                     } else {
                         echo "Frontend deployment check returned HTTP code: ${response}"
                     }
@@ -575,7 +597,7 @@ EOF
     post {
         success {
             echo 'Frontend deployment completed successfully!'
-            echo "Application is accessible at: http://${env.EC2_PUBLIC_IP}"
+            sh 'echo "Application is accessible at: http://${EC2_PUBLIC_IP}"'
         }
         failure {
             echo 'There was a failure during the frontend deployment process.'
