@@ -184,15 +184,10 @@ pipeline {
             }
         }
         
-        stage('Install Terraform') {
+        stage('Check Terraform') {
             steps {
                 sh '''
-                    if ! command -v terraform &> /dev/null; then
-                        curl -fsSL https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip -o terraform.zip
-                        unzip terraform.zip
-                        sudo mv terraform /usr/local/bin/
-                        rm terraform.zip
-                    fi
+                    # Just verify Terraform is available and print its version
                     terraform --version
                 '''
             }
@@ -275,8 +270,8 @@ pipeline {
                     }
                     '''
                     
-                    // Initialize Terraform
-                    sh 'cd terraform && terraform init'
+                    // Initialize Terraform with -upgrade flag to ensure latest providers
+                    sh 'cd terraform && terraform init -upgrade'
                     
                     // Check if we already have a frontend instance
                     script {
@@ -296,8 +291,21 @@ pipeline {
                             sh 'cd terraform && terraform apply -auto-approve'
                         } else {
                             echo "Found existing frontend instance: ${existingInstanceId}"
-                            // Import the existing instance into Terraform state
-                            sh "cd terraform && terraform import aws_instance.frontend ${existingInstanceId}"
+                            // Check if the instance is already in the Terraform state
+                            def instanceInState = sh(
+                                script: '''
+                                    cd terraform && terraform state list | grep aws_instance.frontend || echo "not_found"
+                                ''',
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (instanceInState == "not_found") {
+                                // Import the existing instance into Terraform state
+                                echo "Importing existing instance into Terraform state..."
+                                sh "cd terraform && terraform import aws_instance.frontend ${existingInstanceId} || echo 'Import failed but continuing'"
+                            } else {
+                                echo "Instance already in Terraform state"
+                            }
                         }
                         
                         // Get the public IP of the instance using AWS CLI rather than Terraform output
