@@ -2,7 +2,6 @@ pipeline {
     agent any
     
     tools {
-        // Using standard Maven and JDK tools instead of NodeJS
         maven 'M3'
         jdk 'JDK'
     }
@@ -13,8 +12,9 @@ pipeline {
         AWS_CREDENTIALS = credentials('aws-credentials') // AWS credentials for EC2
         COINXCEL_FRONTEND_REPO = 'https://github.com/munsif-dev/CoinXcelClient.git' // GitHub repository URL
         SSH_KEY_CREDENTIALS = 'aws-ssh-key' // Jenkins credential ID for SSH key
-        API_BASE_URL = 'http://3.83.249.119:8080' // Backend API URL - using your backend EC2 IP
+        API_BASE_URL = 'http://44.212.40.132:8080' // Backend API URL - using your backend EC2 IP
         TERRAFORM_STATE_KEY = 'coinxcel-frontend-terraform.tfstate' // S3 key for storing terraform state
+        NODE_VERSION = '18' // Updated to use Node.js 18 instead of 16
     }
     
     stages {
@@ -146,8 +146,6 @@ pipeline {
                           - lsb-release
                           - apt-transport-https
                           - python3-docker
-                          - nodejs
-                          - npm
                         state: present
                 
                     - name: Create keyrings directory
@@ -239,6 +237,29 @@ pipeline {
                     - name: Display Docker Compose version
                       debug:
                         var: compose_version.stdout
+                
+                    # Install Node.js 18
+                    - name: Install Node.js 18
+                      block:
+                        - name: Install Node.js repo
+                          shell: |
+                            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+                          args:
+                            warn: false
+                
+                        - name: Install Node.js
+                          apt:
+                            name: nodejs
+                            state: present
+                            update_cache: yes
+                
+                        - name: Check Node.js version
+                          shell: node -v
+                          register: node_version
+                
+                        - name: Display Node.js version
+                          debug:
+                            var: node_version.stdout
                 '''
                 
                 // Create Ansible deployment playbook
@@ -288,7 +309,7 @@ pipeline {
                     - name: Create Dockerfile
                       copy:
                         content: |
-                          FROM node:16-alpine
+                          FROM node:18-alpine
                           
                           WORKDIR /app
                           
@@ -424,15 +445,20 @@ pipeline {
         
         stage('Install Dependencies') {
             steps {
-                // Install Node.js and npm if not present on the Jenkins agent
+                // Install Node.js 18 and npm
                 sh '''
-                    # Check if Node.js is installed, if not install it
-                    if ! command -v node &> /dev/null; then
-                        curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-                        sudo apt-get install -y nodejs
-                    fi
+                    # Remove any existing Node.js installation
+                    sudo apt-get remove -y nodejs npm || true
                     
-                    # Install npm dependencies
+                    # Install Node.js 18
+                    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+                    sudo apt-get install -y nodejs
+                    
+                    # Verify Node.js version
+                    node -v
+                    npm -v
+                    
+                    # Install dependencies
                     npm install
                 '''
             }
