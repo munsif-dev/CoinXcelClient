@@ -16,6 +16,7 @@ pipeline {
         TERRAFORM_STATE_KEY = 'coinxcel-frontend-terraform.tfstate' // S3 key for storing terraform state
         NODE_VERSION = '18' // Updated to use Node.js 18 instead of 16
         AWS_DEFAULT_REGION = 'us-east-1' // Add default AWS region
+        TF_PLUGIN_CACHE_DIR = '/var/lib/jenkins/terraform-plugin-cache' // Persistent cache for Terraform plugins
     }
     
     stages {
@@ -26,6 +27,9 @@ pipeline {
                 
                 // Create directories for Terraform and Ansible
                 sh 'mkdir -p terraform ansible'
+                
+                // Create Terraform plugin cache directory if it doesn't exist
+                sh 'mkdir -p $TF_PLUGIN_CACHE_DIR'
             }
         }
         
@@ -203,8 +207,17 @@ pipeline {
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    // Create basic Terraform files if they don't exist
+                    // Create terraform configuration - pin provider version to avoid unnecessary downloads
                     writeFile file: 'terraform/main.tf', text: '''
+                    terraform {
+                      required_providers {
+                        aws = {
+                          source  = "hashicorp/aws"
+                          version = "5.93.0"  # Pin to specific version
+                        }
+                      }
+                    }
+                    
                     provider "aws" {
                       region = "us-east-1"
                     }
@@ -271,8 +284,8 @@ pipeline {
                     }
                     '''
                     
-                    // Initialize Terraform with -upgrade flag to ensure latest providers
-                    sh 'cd terraform && terraform init'
+                    // Initialize Terraform without forcing providers upgrade
+                    sh 'cd terraform && terraform init -upgrade=false'
                     
                     // Check if we already have a frontend instance
                     script {
@@ -310,19 +323,11 @@ pipeline {
                             }
                         }
                         
-                        // Get the public IP of the instance using AWS CLI rather than Terraform output
-                        sh '''
-                            EC2_PUBLIC_IP=$(aws ec2 describe-instances \
-                                --region ${AWS_DEFAULT_REGION} \
-                                --filters "Name=tag:Name,Values=coinxcel-frontend" "Name=instance-state-name,Values=running" \
-                                --query "Reservations[].Instances[].PublicIpAddress" \
-                                --output text)
-                            echo "EC2_PUBLIC_IP=${EC2_PUBLIC_IP}" > ec2.properties
-                        '''
-                        
-                        // Load the properties file to make the EC2_PUBLIC_IP available
-                        def props = readProperties file: 'ec2.properties'
-                        env.EC2_PUBLIC_IP = props.EC2_PUBLIC_IP
+                        // Get the public IP directly from terraform output to avoid readProperties step
+                        env.EC2_PUBLIC_IP = sh(
+                            script: 'cd terraform && terraform output -raw frontend_public_ip',
+                            returnStdout: true
+                        ).trim()
                         
                         echo "Frontend EC2 Public IP: ${env.EC2_PUBLIC_IP}"
                     }
@@ -424,7 +429,7 @@ pipeline {
     post {
         success {
             echo 'Frontend deployment completed successfully!'
-            sh 'echo "Application is accessible at: http://${EC2_PUBLIC_IP}"'
+            sh "echo 'Application is accessible at: http://${env.EC2_PUBLIC_IP}'"
         }
         failure {
             echo 'There was a failure during the frontend deployment process.'
