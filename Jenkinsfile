@@ -11,7 +11,7 @@ pipeline {
         AWS_CREDENTIALS = credentials('aws-credentials') // AWS credentials for EC2
         COINXCEL_FRONTEND_REPO = 'https://github.com/munsif-dev/CoinXcelClient.git' // GitHub repository URL
         SSH_KEY_CREDENTIALS = 'aws-ssh-key' // Jenkins credential ID for SSH key
-        API_BASE_URL = 'http://44.212.40.132:8080' // Backend API URL - using your backend EC2 IP
+        API_BASE_URL = 'http://3.83.249.119:8080' // Backend API URL - using your backend EC2 IP
         TERRAFORM_STATE_KEY = 'coinxcel-frontend-terraform.tfstate' // S3 key for storing terraform state
     }
     
