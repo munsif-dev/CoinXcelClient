@@ -222,8 +222,6 @@ ansible_python_interpreter=/usr/bin/python3
         - ../lib
         - ../src
         - ../pages
-        - ../store
-        - ../utils
 
     - name: Copy existing source code directories
       copy:
