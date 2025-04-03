@@ -465,8 +465,19 @@ ansible_python_interpreter=/usr/bin/python3
                         
                         echo "Frontend EC2 Public IP: ${env.EC2_PUBLIC_IP}"
                         
-                        // Update Ansible hosts file with the EC2 IP
-                        sh "sed -i 's/\\${EC2_PUBLIC_IP}/${env.EC2_PUBLIC_IP}/g' ansible/hosts"
+                        // Update Ansible hosts file with the EC2 IP - using a different approach
+                        sh """
+                            # Create hosts file directly with the correct IP
+                            cat > ansible/hosts << EOF
+[frontend_servers]
+frontend ansible_host=${env.EC2_PUBLIC_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+[frontend_servers:vars]
+ansible_python_interpreter=/usr/bin/python3
+EOF
+                            # Verify the hosts file content
+                            cat ansible/hosts
+                        """
                     }
                 }
             }
