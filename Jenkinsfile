@@ -38,9 +38,9 @@ pipeline {
                     ls -la
                 '''
                 
-                // Create Ansible playbooks and Dockerfile
+                // Create Ansible playbooks and updated Dockerfile for production
                 writeFile file: 'Dockerfile', text: '''
-FROM node:20
+FROM node:20 AS builder
 
 WORKDIR /app
 
@@ -48,16 +48,32 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install
+RUN npm ci
 
 # Copy the rest of the application
 COPY . .
 
-# Expose port 3000
+# Build the application
+RUN npm run build
+
+# Production image
+FROM node:20-slim AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Copy necessary files from builder stage
+COPY --from=builder /app/next.config.* ./
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
+# Expose port
 EXPOSE 3000
 
-# Start the application
-CMD ["npm", "run", "dev"]
+# Set the command to run the app
+CMD ["node", "server.js"]
 '''
 
                 writeFile file: 'ansible/hosts', text: '''
@@ -191,6 +207,28 @@ ansible_python_interpreter=/usr/bin/python3
         group: ubuntu
         mode: '0644'
 
+    - name: Update next.config.ts to ensure proper production build
+      copy:
+        content: |
+          import type { NextConfig } from "next";
+
+          const nextConfig: NextConfig = {
+            output: "standalone",
+            reactStrictMode: true,
+            // Ensure images are properly handled
+            images: {
+              unoptimized: true
+            },
+            // Ensures CSS is properly bundled
+            transpilePackages: [],
+          };
+
+          export default nextConfig;
+        dest: /home/ubuntu/frontend/next.config.ts
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
     - name: Check if files exist before copying
       stat:
         path: "{{ item }}"
@@ -199,11 +237,9 @@ ansible_python_interpreter=/usr/bin/python3
       with_items:
         - ../package.json
         - ../package-lock.json
-        - ../next.config.js
-        - ../next.config.ts
         - ../tsconfig.json
         - ../tailwind.config.ts
-        - ../tailwind.config.js
+        - ../postcss.config.mjs
       
     - name: Copy existing application files
       copy:
@@ -223,10 +259,8 @@ ansible_python_interpreter=/usr/bin/python3
         - ../app
         - ../components
         - ../public
-        - ../styles
         - ../lib
         - ../src
-        - ../pages
         - ../store
 
     - name: Copy existing source code directories
@@ -246,21 +280,6 @@ ansible_python_interpreter=/usr/bin/python3
         owner: ubuntu
         group: ubuntu
         mode: '0644'
-        
-    - name: Create minimal next.config.js if it doesn't exist
-      copy:
-        content: |
-          const nextConfig = {
-            output: "standalone",
-            reactStrictMode: true,
-          };
-          
-          export default nextConfig;
-        dest: /home/ubuntu/frontend/next.config.js
-        owner: ubuntu
-        group: ubuntu
-        mode: '0644'
-        force: no
 
     - name: Create docker-compose.yml
       copy:
@@ -269,12 +288,15 @@ ansible_python_interpreter=/usr/bin/python3
           
           services:
             frontend:
-              image: {{ docker_hub_user }}/coinxcel-frontend:latest
+              build:
+                context: .
+                dockerfile: Dockerfile
               container_name: coinxcel-frontend
               ports:
                 - "3000:3000"
               environment:
                 - NEXT_PUBLIC_API_BASE_URL={{ api_base_url }}
+                - NODE_ENV=production
               restart: always
         dest: /home/ubuntu/frontend/docker-compose.yml
         owner: ubuntu
@@ -294,7 +316,7 @@ ansible_python_interpreter=/usr/bin/python3
       ignore_errors: yes
 
     - name: Build Docker image
-      shell: cd /home/ubuntu/frontend && docker build -t {{ docker_hub_user }}/coinxcel-frontend:latest .
+      shell: cd /home/ubuntu/frontend && docker-compose build
       become: yes
       become_user: ubuntu
       register: build_result
@@ -303,15 +325,23 @@ ansible_python_interpreter=/usr/bin/python3
       debug:
         var: build_result.stdout_lines
 
+    - name: Tag Docker image
+      shell: cd /home/ubuntu/frontend && docker tag frontend_frontend {{ docker_hub_user }}/coinxcel-frontend:latest
+      become: yes
+      become_user: ubuntu
+      ignore_errors: yes
+
     - name: Push Docker image to Docker Hub
       shell: docker push {{ docker_hub_user }}/coinxcel-frontend:latest
       become: yes
       become_user: ubuntu
       register: push_result
+      ignore_errors: yes
 
     - name: Display push result
       debug:
         var: push_result.stdout_lines
+      ignore_errors: yes
 
     - name: Start frontend container
       shell: cd /home/ubuntu/frontend && docker-compose up -d
@@ -368,6 +398,24 @@ ansible_python_interpreter=/usr/bin/python3
                   proxy_set_header Connection 'upgrade';
                   proxy_set_header Host $host;
                   proxy_cache_bypass $http_upgrade;
+                  proxy_read_timeout 300;
+                  proxy_connect_timeout 300;
+                  proxy_send_timeout 300;
+              }
+              
+              # Explicitly handle static files
+              location /_next/static/ {
+                  proxy_pass http://localhost:3000/_next/static/;
+                  proxy_cache_bypass $http_upgrade;
+                  expires 365d;
+                  add_header Cache-Control "public, max-age=31536000, immutable";
+              }
+              
+              # Handle other Next.js assets
+              location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+                  proxy_pass http://localhost:3000;
+                  expires 365d;
+                  add_header Cache-Control "public, max-age=31536000, immutable";
               }
           }
         dest: /etc/nginx/sites-available/coinxcel-frontend
@@ -406,6 +454,7 @@ ansible_python_interpreter=/usr/bin/python3
               tcp_nodelay on;
               keepalive_timeout 65;
               types_hash_max_size 2048;
+              client_max_body_size 20M;
               
               include /etc/nginx/mime.types;
               default_type application/octet-stream;
@@ -425,38 +474,6 @@ ansible_python_interpreter=/usr/bin/python3
         group: root
         force: no
 
-    - name: Make sure Nginx service directory exists
-      file:
-        path: /lib/systemd/system
-        state: directory
-        mode: '0755'
-      
-    - name: Create Nginx systemd service if it doesn't exist
-      copy:
-        dest: /lib/systemd/system/nginx.service
-        mode: '0644'
-        owner: root
-        group: root
-        content: |
-          [Unit]
-          Description=A high performance web server and a reverse proxy server
-          Documentation=man:nginx(8)
-          After=network.target
-          
-          [Service]
-          Type=forking
-          PIDFile=/run/nginx.pid
-          ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'
-          ExecStart=/usr/sbin/nginx -g 'daemon on; master_process on;'
-          ExecReload=/usr/sbin/nginx -g 'daemon on; master_process on;' -s reload
-          ExecStop=-/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/nginx.pid
-          TimeoutStopSec=5
-          KillMode=mixed
-          
-          [Install]
-          WantedBy=multi-user.target
-        force: no
-    
     - name: Restart Nginx with service directly
       command: systemctl daemon-reload
       
