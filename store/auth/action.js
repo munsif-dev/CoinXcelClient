@@ -1,7 +1,7 @@
 import axios from "axios";
 
 export const register = (userData) => async (dispatch) => {
-  const baseurl = "http://springboot:8080";
+  const baseurl = "http://3.85.166.149:8080";
   dispatch({ type: "REGISTER_REQUEST" });
 
   try {
@@ -18,7 +18,7 @@ export const register = (userData) => async (dispatch) => {
 };
 
 export const login = (userData) => async (dispatch) => {
-  const baseurl = "http://springboot:8080";
+  const baseurl = "http://3.85.166.149:8080";
   dispatch({ type: "LOGIN_REQUEST" });
 
   try {
