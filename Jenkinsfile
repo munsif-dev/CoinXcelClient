@@ -331,6 +331,23 @@ ansible_python_interpreter=/usr/bin/python3
       debug:
         var: container_status.stdout_lines
 
+    - name: Install Nginx if not already installed
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+      
+    - name: Create Nginx directories if not exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      with_items:
+        - /etc/nginx/sites-available
+        - /etc/nginx/sites-enabled
+        
     - name: Setup Nginx as reverse proxy
       copy:
         content: |
@@ -357,6 +374,7 @@ ansible_python_interpreter=/usr/bin/python3
         src: /etc/nginx/sites-available/coinxcel-frontend
         dest: /etc/nginx/sites-enabled/coinxcel-frontend
         state: link
+      ignore_errors: yes
 
     - name: Disable default Nginx site
       file:
@@ -364,15 +382,84 @@ ansible_python_interpreter=/usr/bin/python3
         state: absent
       ignore_errors: yes
 
-    - name: Install Nginx if not already installed
-      apt:
-        name: nginx
-        state: present
+    - name: Create Nginx base configuration if it doesn't exist
+      copy:
+        content: |
+          user www-data;
+          worker_processes auto;
+          pid /run/nginx.pid;
+          include /etc/nginx/modules-enabled/*.conf;
+          
+          events {
+              worker_connections 768;
+          }
+          
+          http {
+              sendfile on;
+              tcp_nopush on;
+              tcp_nodelay on;
+              keepalive_timeout 65;
+              types_hash_max_size 2048;
+              
+              include /etc/nginx/mime.types;
+              default_type application/octet-stream;
+              
+              ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+              ssl_prefer_server_ciphers on;
+              
+              access_log /var/log/nginx/access.log;
+              error_log /var/log/nginx/error.log;
+              
+              include /etc/nginx/conf.d/*.conf;
+              include /etc/nginx/sites-enabled/*;
+          }
+        dest: /etc/nginx/nginx.conf
+        mode: '0644'
+        owner: root
+        group: root
+        force: no
 
+    - name: Make sure Nginx service directory exists
+      file:
+        path: /lib/systemd/system
+        state: directory
+        mode: '0755'
+      
+    - name: Create Nginx systemd service if it doesn't exist
+      copy:
+        dest: /lib/systemd/system/nginx.service
+        mode: '0644'
+        owner: root
+        group: root
+        content: |
+          [Unit]
+          Description=A high performance web server and a reverse proxy server
+          Documentation=man:nginx(8)
+          After=network.target
+          
+          [Service]
+          Type=forking
+          PIDFile=/run/nginx.pid
+          ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'
+          ExecStart=/usr/sbin/nginx -g 'daemon on; master_process on;'
+          ExecReload=/usr/sbin/nginx -g 'daemon on; master_process on;' -s reload
+          ExecStop=-/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/nginx.pid
+          TimeoutStopSec=5
+          KillMode=mixed
+          
+          [Install]
+          WantedBy=multi-user.target
+        force: no
+    
+    - name: Restart Nginx with service directly
+      command: systemctl daemon-reload
+      
     - name: Restart Nginx
       systemd:
         name: nginx
         state: restarted
+        enabled: yes
+      ignore_errors: yes
 '''
             }
         }
