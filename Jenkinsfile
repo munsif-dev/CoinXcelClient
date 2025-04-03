@@ -11,38 +11,334 @@ pipeline {
         DOCKER_HUB_CREDS = credentials('dockerhub-credentials')
         AWS_CREDENTIALS = credentials('aws-credentials')
         COINXCEL_FRONTEND_REPO = 'https://github.com/munsif-dev/CoinXcelClient.git'
-        SSH_KEY_CREDENTIALS = 'jenkins-key' // UPDATED to match your AWS key name and Jenkins credential ID
+        SSH_KEY_CREDENTIALS = 'jenkins-key'
         API_BASE_URL = 'http://44.212.40.132:8080'
         TERRAFORM_STATE_KEY = 'coinxcel-frontend-terraform.tfstate'
-        NODE_VERSION = '18'
+        NODE_VERSION = '20'
         AWS_DEFAULT_REGION = 'us-east-1'
         TF_PLUGIN_CACHE_DIR = '/var/lib/jenkins/terraform-plugin-cache'
-        EC2_USERNAME = 'ubuntu' // UPDATED to match your backend configuration
+        EC2_USERNAME = 'ubuntu'
     }
     
     stages {
         stage('Checkout') {
             steps {
+                // Checkout the frontend repository
                 git branch: 'main', url: "${env.COINXCEL_FRONTEND_REPO}"
+                
+                // Create necessary directories
                 sh 'mkdir -p terraform ansible'
                 sh 'mkdir -p $TF_PLUGIN_CACHE_DIR'
+                
+                // Create Ansible playbooks and Dockerfile
+                writeFile file: 'Dockerfile', text: '''
+FROM node:20
+
+WORKDIR /app
+
+# Copy package.json and package-lock.json
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy the rest of the application
+COPY . .
+
+# Expose port 3000
+EXPOSE 3000
+
+# Start the application
+CMD ["npm", "run", "dev"]
+'''
+
+                writeFile file: 'ansible/hosts', text: '''
+[frontend_servers]
+frontend ansible_host=${EC2_PUBLIC_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+[frontend_servers:vars]
+ansible_python_interpreter=/usr/bin/python3
+'''
+
+                writeFile file: 'ansible/install-docker.yml', text: '''
+---
+- name: Install Docker and Docker Compose
+  hosts: frontend_servers
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install prerequisites
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - apt-transport-https
+          - python3-docker
+        state: present
+
+    - name: Create keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Docker GPG key
+      block:
+        - name: Download Docker GPG key
+          get_url:
+            url: https://download.docker.com/linux/ubuntu/gpg
+            dest: /tmp/docker-archive-keyring.gpg
+            mode: '0644'
+            
+        - name: Dearmor GPG key
+          shell: gpg --dearmor < /tmp/docker-archive-keyring.gpg > /etc/apt/keyrings/docker.gpg
+          args:
+            creates: /etc/apt/keyrings/docker.gpg
+            
+        - name: Set permissions on key
+          file:
+            path: /etc/apt/keyrings/docker.gpg
+            mode: '0644'
+
+    - name: Set up Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Install Docker Engine
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Install Docker Compose
+      get_url:
+        url: https://github.com/docker/compose/releases/download/v2.24.1/docker-compose-linux-x86_64
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+
+    - name: Create symlink for Docker Compose
+      file:
+        src: /usr/local/bin/docker-compose
+        dest: /usr/bin/docker-compose
+        state: link
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Start Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Check Docker installation
+      command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Display Docker version
+      debug:
+        var: docker_version.stdout
+'''
+
+                writeFile file: 'ansible/deploy-frontend.yml', text: '''
+---
+- name: Deploy CoinXcel Frontend Application
+  hosts: frontend_servers
+  become: yes
+  vars:
+    docker_hub_user: "{{ lookup('env', 'DOCKER_USERNAME') }}"
+    docker_hub_password: "{{ lookup('env', 'DOCKER_PASSWORD') }}"
+    api_base_url: "{{ lookup('env', 'API_BASE_URL') }}"
+  tasks:
+    - name: Create app directory
+      file:
+        path: /home/ubuntu/frontend
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copy Dockerfile
+      copy:
+        src: ../Dockerfile
+        dest: /home/ubuntu/frontend/Dockerfile
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Copy application files
+      copy:
+        src: "{{ item }}"
+        dest: /home/ubuntu/frontend/
+        owner: ubuntu
+        group: ubuntu
+      with_items:
+        - ../package.json
+        - ../package-lock.json
+        - ../next.config.js
+        - ../tsconfig.json
+        - ../tailwind.config.ts
+
+    - name: Copy source code directories
+      copy:
+        src: "../{{ item }}"
+        dest: /home/ubuntu/frontend/
+        owner: ubuntu
+        group: ubuntu
+      with_items:
+        - app
+        - components
+        - public
+        - styles
+        - lib
+      ignore_errors: yes
+
+    - name: Create .env file with API URL
+      copy:
+        content: |
+          NEXT_PUBLIC_API_BASE_URL={{ api_base_url }}
+        dest: /home/ubuntu/frontend/.env
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Create docker-compose.yml
+      copy:
+        content: |
+          version: "3.8"
+          
+          services:
+            frontend:
+              image: {{ docker_hub_user }}/coinxcel-frontend:latest
+              container_name: coinxcel-frontend
+              ports:
+                - "3000:3000"
+              environment:
+                - NEXT_PUBLIC_API_BASE_URL={{ api_base_url }}
+              restart: always
+        dest: /home/ubuntu/frontend/docker-compose.yml
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Login to Docker Hub
+      shell: echo {{ docker_hub_password }} | docker login -u {{ docker_hub_user }} --password-stdin
+      become: yes
+      become_user: ubuntu
+      no_log: true
+
+    - name: Stop existing containers
+      shell: cd /home/ubuntu/frontend && docker-compose down --remove-orphans || true
+      become: yes
+      become_user: ubuntu
+      ignore_errors: yes
+
+    - name: Build Docker image
+      shell: cd /home/ubuntu/frontend && docker build -t {{ docker_hub_user }}/coinxcel-frontend:latest .
+      become: yes
+      become_user: ubuntu
+      register: build_result
+
+    - name: Display build result
+      debug:
+        var: build_result.stdout_lines
+
+    - name: Push Docker image to Docker Hub
+      shell: docker push {{ docker_hub_user }}/coinxcel-frontend:latest
+      become: yes
+      become_user: ubuntu
+      register: push_result
+
+    - name: Display push result
+      debug:
+        var: push_result.stdout_lines
+
+    - name: Start frontend container
+      shell: cd /home/ubuntu/frontend && docker-compose up -d
+      become: yes
+      become_user: ubuntu
+      register: frontend_start
+
+    - name: Display frontend start result
+      debug:
+        var: frontend_start.stdout_lines
+
+    - name: Wait for application to start
+      pause:
+        seconds: 20
+
+    - name: Check container status
+      shell: docker ps -a
+      become: yes
+      become_user: ubuntu
+      register: container_status
+
+    - name: Display container status
+      debug:
+        var: container_status.stdout_lines
+
+    - name: Setup Nginx as reverse proxy
+      copy:
+        content: |
+          server {
+              listen 80;
+              server_name _;
+              
+              location / {
+                  proxy_pass http://localhost:3000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_cache_bypass $http_upgrade;
+              }
+          }
+        dest: /etc/nginx/sites-available/coinxcel-frontend
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/coinxcel-frontend
+        dest: /etc/nginx/sites-enabled/coinxcel-frontend
+        state: link
+
+    - name: Disable default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      ignore_errors: yes
+
+    - name: Install Nginx if not already installed
+      apt:
+        name: nginx
+        state: present
+
+    - name: Restart Nginx
+      systemd:
+        name: nginx
+        state: restarted
+'''
             }
         }
-        
-        stage('Install Dependencies') {
-            steps {
-                sh '''
-                    sudo apt-get remove -y nodejs npm || true
-                    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-                    sudo apt-get install -y nodejs
-                    node -v
-                    npm -v
-                    npm install
-                '''
-            }
-        }
-        
-        // Other stages remain the same...
         
         stage('Provision Infrastructure') {
             steps {
@@ -69,7 +365,7 @@ pipeline {
                     resource "aws_instance" "frontend" {
                       ami           = "ami-0c7217cdde317cfec"  # Ubuntu 22.04 LTS
                       instance_type = "t2.micro"
-                      key_name      = "jenkins-key"  # UPDATED to match your AWS key name
+                      key_name      = "jenkins-key"
                       
                       tags = {
                         Name = "coinxcel-frontend"
@@ -168,103 +464,53 @@ pipeline {
                         ).trim()
                         
                         echo "Frontend EC2 Public IP: ${env.EC2_PUBLIC_IP}"
+                        
+                        // Update Ansible hosts file with the EC2 IP
+                        sh "sed -i 's/\\${EC2_PUBLIC_IP}/${env.EC2_PUBLIC_IP}/g' ansible/hosts"
                     }
                 }
             }
         }
         
-        stage('Deploy to EC2') {
+        stage('Test SSH Connection') {
             steps {
-                writeFile file: 'deploy.sh', text: '''#!/bin/bash
-                set -e
-
-                # Install Node.js and npm
-                curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-                sudo apt-get install -y nodejs
-                
-                # Install required packages
-                sudo apt-get update
-                sudo apt-get install -y nginx
-                
-                # Stop nginx during deployment
-                sudo systemctl stop nginx || true
-                
-                # Clean previous deployment
-                sudo rm -rf /var/www/coinxcel-frontend
-                sudo mkdir -p /var/www/coinxcel-frontend
-                
-                # Copy build files
-                sudo cp -r .next /var/www/coinxcel-frontend/
-                sudo cp -r public /var/www/coinxcel-frontend/
-                sudo cp next.config.js package.json /var/www/coinxcel-frontend/
-                
-                # Install production dependencies
-                cd /var/www/coinxcel-frontend
-                sudo npm install --production
-                
-                # Configure Nginx
-                sudo tee /etc/nginx/sites-available/coinxcel-frontend > /dev/null << EOL
-                server {
-                    listen 80;
-                    server_name _;
-                    
-                    location / {
-                        proxy_pass http://localhost:3000;
-                        proxy_http_version 1.1;
-                        proxy_set_header Upgrade \$http_upgrade;
-                        proxy_set_header Connection 'upgrade';
-                        proxy_set_header Host \$host;
-                        proxy_cache_bypass \$http_upgrade;
-                    }
-                }
-                EOL
-                
-                # Enable site config
-                sudo ln -sf /etc/nginx/sites-available/coinxcel-frontend /etc/nginx/sites-enabled/
-                sudo rm -f /etc/nginx/sites-enabled/default
-                
-                # Set up the app as a systemd service
-                sudo tee /etc/systemd/system/coinxcel-frontend.service > /dev/null << EOL
-                [Unit]
-                Description=CoinXcel Frontend
-                After=network.target
-                
-                [Service]
-                Type=simple
-                User=ubuntu
-                WorkingDirectory=/var/www/coinxcel-frontend
-                ExecStart=/usr/bin/npm start
-                Restart=on-failure
-                
-                [Install]
-                WantedBy=multi-user.target
-                EOL
-                
-                # Start services
-                sudo systemctl daemon-reload
-                sudo systemctl enable coinxcel-frontend
-                sudo systemctl start coinxcel-frontend
-                sudo systemctl restart nginx
-                
-                echo "Deployment completed successfully"
-                '''
-                
-                sh 'chmod +x deploy.sh'
-                
-                // Add debugging to check SSH connection
                 sshagent([env.SSH_KEY_CREDENTIALS]) {
                     sh """
-                        # Test SSH connection first with verbose output
+                        # Copy SSH key to a temporary location
+                        mkdir -p /tmp
+                        ssh-keygen -f "/var/lib/jenkins/.ssh/known_hosts" -R "${env.EC2_PUBLIC_IP}" || true
+                        
+                        # Test SSH connection with verbose output
                         echo "Testing SSH connection to ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP}..."
                         ssh -v -o StrictHostKeyChecking=no ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP} 'echo SSH connection successful'
-                        
-                        # If connection successful, proceed with deployment
-                        echo "Copying deployment files..."
-                        scp -o StrictHostKeyChecking=no -r .next package.json next.config.js deploy.sh public ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP}:~/
-                        
-                        echo "Executing deployment script..."
-                        ssh -o StrictHostKeyChecking=no ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP} 'bash deploy.sh'
                     """
+                }
+            }
+        }
+        
+        stage('Deploy with Ansible') {
+            steps {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: env.SSH_KEY_CREDENTIALS, keyFileVariable: 'SSH_KEY'),
+                    usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
+                ]) {
+                    sh '''
+                        # Copy SSH key to temporary location for Ansible
+                        cp $SSH_KEY /tmp/ec2_key.pem
+                        chmod 600 /tmp/ec2_key.pem
+                        
+                        # Install Docker on the EC2 instance
+                        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i ansible/hosts ansible/install-docker.yml -v
+                        
+                        # Deploy the application with Docker
+                        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i ansible/hosts ansible/deploy-frontend.yml -v \
+                            -e "DOCKER_USERNAME=$DOCKER_USERNAME" \
+                            -e "DOCKER_PASSWORD=$DOCKER_PASSWORD" \
+                            -e "API_BASE_URL=$API_BASE_URL"
+                            
+                        # Clean up temporary file
+                        rm -f /tmp/ec2_key.pem
+                    '''
                 }
             }
         }
