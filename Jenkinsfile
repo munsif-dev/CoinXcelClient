@@ -17,7 +17,7 @@ pipeline {
         NODE_VERSION = '18'
         AWS_DEFAULT_REGION = 'us-east-1'
         TF_PLUGIN_CACHE_DIR = '/var/lib/jenkins/terraform-plugin-cache'
-        EC2_USERNAME = 'ec2-user' // UPDATED to match your backend configuration
+        EC2_USERNAME = 'ubuntu' // UPDATED to match your backend configuration
     }
     
     stages {
