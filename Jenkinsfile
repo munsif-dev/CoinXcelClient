@@ -697,6 +697,10 @@ EOF
         
         stage('Test SSH Connection') {
             steps {
+
+                sh "echo 'Waiting for EC2 instance to fully initialize...'"
+                sh "sleep 90"
+                
                 sshagent([env.SSH_KEY_CREDENTIALS]) {
                     sh """
                         # Copy SSH key to a temporary location
