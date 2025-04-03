@@ -18,6 +18,8 @@ pipeline {
         AWS_DEFAULT_REGION = 'us-east-1'
         TF_PLUGIN_CACHE_DIR = '/var/lib/jenkins/terraform-plugin-cache'
         EC2_USERNAME = 'ubuntu'
+        ANSIBLE_TIMEOUT = '30'
+        ANSIBLE_SSH_ARGS = '-o ConnectTimeout=10'
     }
     
     stages {
@@ -26,12 +28,15 @@ pipeline {
                 // Checkout the frontend repository
                 git branch: 'main', url: "${env.COINXCEL_FRONTEND_REPO}"
                 
-                // Create necessary directories
-                sh 'mkdir -p terraform ansible'
-                sh 'mkdir -p $TF_PLUGIN_CACHE_DIR'
-                
-                // List directory content to debug
-                sh 'ls -la'
+                // Create necessary directories and set permissions
+                sh '''
+                    mkdir -p terraform ansible
+                    mkdir -p $TF_PLUGIN_CACHE_DIR
+                    chmod 755 $TF_PLUGIN_CACHE_DIR
+                    
+                    # List directory content to debug
+                    ls -la
+                '''
                 
                 // Create Ansible playbooks and Dockerfile
                 writeFile file: 'Dockerfile', text: '''
@@ -549,9 +554,48 @@ ansible_python_interpreter=/usr/bin/python3
                     }
                     '''
                     
-                    sh 'cd terraform && terraform init -upgrade=false'
+                    // Initialize terraform with proper plugin caching
+                    sh '''
+                        # Ensure plugin cache directory has correct permissions
+                        mkdir -p $TF_PLUGIN_CACHE_DIR
+                        chmod 755 $TF_PLUGIN_CACHE_DIR
+                        
+                        cd terraform && terraform init -plugin-dir=$TF_PLUGIN_CACHE_DIR -input=false -lock=false
+                    '''
                     
+                    // Import existing resources and apply changes
                     script {
+                        // First check for existing security group
+                        def existingSecurityGroupId = sh(
+                            script: '''
+                                aws ec2 describe-security-groups \
+                                --region ${AWS_DEFAULT_REGION} \
+                                --filters "Name=group-name,Values=coinxcel-frontend-sg" \
+                                --query "SecurityGroups[0].GroupId" \
+                                --output text
+                            ''',
+                            returnStdout: true
+                        ).trim()
+                        
+                        // If security group exists but not in state, import it
+                        if (existingSecurityGroupId != 'None' && existingSecurityGroupId != '') {
+                            echo "Found existing security group: ${existingSecurityGroupId}"
+                            def sgInState = sh(
+                                script: '''
+                                    cd terraform && terraform state list | grep aws_security_group.frontend_sg || echo "not_found"
+                                ''',
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (sgInState == "not_found") {
+                                echo "Importing existing security group into Terraform state..."
+                                sh "cd terraform && terraform import aws_security_group.frontend_sg ${existingSecurityGroupId} || echo 'Security group import failed but continuing'"
+                            } else {
+                                echo "Security group already in Terraform state"
+                            }
+                        }
+                        
+                        // Now check for existing EC2 instance
                         def existingInstanceId = sh(
                             script: '''
                                 aws ec2 describe-instances \
@@ -563,10 +607,7 @@ ansible_python_interpreter=/usr/bin/python3
                             returnStdout: true
                         ).trim()
                         
-                        if (existingInstanceId == '') {
-                            echo "No existing frontend instance found. Creating a new one..."
-                            sh 'cd terraform && terraform apply -auto-approve'
-                        } else {
+                        if (existingInstanceId != '') {
                             echo "Found existing frontend instance: ${existingInstanceId}"
                             def instanceInState = sh(
                                 script: '''
@@ -581,28 +622,42 @@ ansible_python_interpreter=/usr/bin/python3
                             } else {
                                 echo "Instance already in Terraform state"
                             }
+                        } else {
+                            echo "No existing frontend instance found. New instance will be created."
                         }
                         
-                        env.EC2_PUBLIC_IP = sh(
-                            script: 'cd terraform && terraform output -raw frontend_public_ip',
-                            returnStdout: true
-                        ).trim()
+                        // Apply changes to ensure the infrastructure is up to date
+                        sh "cd terraform && terraform apply -auto-approve"
                         
-                        echo "Frontend EC2 Public IP: ${env.EC2_PUBLIC_IP}"
-                        
-                        // Update Ansible hosts file with the EC2 IP - using a different approach
-                        sh """
-                            # Create hosts file directly with the correct IP
-                            cat > ansible/hosts << EOF
+                        // Get the EC2 public IP with error handling
+                        try {
+                            env.EC2_PUBLIC_IP = sh(
+                                script: 'cd terraform && terraform output -raw frontend_public_ip',
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (env.EC2_PUBLIC_IP == '') {
+                                error "Failed to get EC2 public IP address"
+                            }
+                            
+                            echo "Frontend EC2 Public IP: ${env.EC2_PUBLIC_IP}"
+                            
+                            // Update Ansible hosts file with the EC2 IP
+                            sh """
+                                # Create hosts file directly with the correct IP
+                                cat > ansible/hosts << EOF
 [frontend_servers]
-frontend ansible_host=${env.EC2_PUBLIC_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+frontend ansible_host=${env.EC2_PUBLIC_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10'
 
 [frontend_servers:vars]
 ansible_python_interpreter=/usr/bin/python3
 EOF
-                            # Verify the hosts file content
-                            cat ansible/hosts
-                        """
+                                # Verify the hosts file content
+                                cat ansible/hosts
+                            """
+                        } catch (Exception e) {
+                            error "Failed to get or process EC2 public IP: ${e.message}"
+                        }
                     }
                 }
             }
@@ -616,9 +671,9 @@ EOF
                         mkdir -p /tmp
                         ssh-keygen -f "/var/lib/jenkins/.ssh/known_hosts" -R "${env.EC2_PUBLIC_IP}" || true
                         
-                        # Test SSH connection with verbose output
+                        # Test SSH connection with timeout and verbose output
                         echo "Testing SSH connection to ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP}..."
-                        ssh -v -o StrictHostKeyChecking=no ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP} 'echo SSH connection successful'
+                        timeout 30 ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP} 'echo SSH connection successful'
                     """
                 }
             }
@@ -634,6 +689,10 @@ EOF
                         # Copy SSH key to temporary location for Ansible
                         cp $SSH_KEY /tmp/ec2_key.pem
                         chmod 600 /tmp/ec2_key.pem
+                        
+                        # Set Ansible environment variables for better performance
+                        export ANSIBLE_TIMEOUT=30
+                        export ANSIBLE_SSH_ARGS='-o ConnectTimeout=10'
                         
                         # Install Docker on the EC2 instance
                         ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i ansible/hosts ansible/install-docker.yml -v
