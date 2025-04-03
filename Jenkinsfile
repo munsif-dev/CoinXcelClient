@@ -471,135 +471,228 @@ ansible_python_interpreter=/usr/bin/python3
         }
         
         stage('Provision Infrastructure') {
-          steps {
-              withCredentials([[
-                  $class: 'AmazonWebServicesCredentialsBinding',
-                  credentialsId: 'aws-credentials',
-                  accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                  secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-              ]]) {
-                  // Write Terraform configuration file
-                  writeFile file: 'terraform/main.tf', text: '''
-                  terraform {
-                    required_providers {
-                      aws = {
-                        source  = "hashicorp/aws"
-                        version = "5.93.0"
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    writeFile file: 'terraform/main.tf', text: '''
+                    terraform {
+                      required_providers {
+                        aws = {
+                          source  = "hashicorp/aws"
+                          version = "5.93.0"
+                        }
                       }
                     }
-                  }
-                  
-                  provider "aws" {
-                    region = "us-east-1"
-                  }
-
-                  resource "aws_instance" "frontend" {
-                    ami           = "ami-0c7217cdde317cfec"  # Ubuntu 22.04 LTS
-                    instance_type = "t2.micro"
-                    key_name      = "jenkins-key"
                     
-                    tags = {
-                      Name = "coinxcel-frontend"
+                    provider "aws" {
+                      region = "us-east-1"
                     }
 
-                    vpc_security_group_ids = [aws_security_group.frontend_sg.id]
-
-                    root_block_device {
-                      volume_size = 30
-                      volume_type = "gp2"
-                    }
-                  }
-
-                  resource "aws_security_group" "frontend_sg" {
-                    name        = "coinxcel-frontend-sg"
-                    description = "Security group for CoinXcel frontend"
-
-                    ingress {
-                      from_port   = 22
-                      to_port     = 22
-                      protocol    = "tcp"
-                      cidr_blocks = ["0.0.0.0/0"]
-                    }
-
-                    ingress {
-                      from_port   = 80
-                      to_port     = 80
-                      protocol    = "tcp"
-                      cidr_blocks = ["0.0.0.0/0"]
-                    }
-
-                    ingress {
-                      from_port   = 443
-                      to_port     = 443
-                      protocol    = "tcp"
-                      cidr_blocks = ["0.0.0.0/0"]
-                    }
-
-                    ingress {
-                      from_port   = 3000
-                      to_port     = 3000
-                      protocol    = "tcp"
-                      cidr_blocks = ["0.0.0.0/0"]
-                    }
-
-                    egress {
-                      from_port   = 0
-                      to_port     = 0
-                      protocol    = "-1"
-                      cidr_blocks = ["0.0.0.0/0"]
-                    }
-                  }
-
-                  output "frontend_public_ip" {
-                    value = aws_instance.frontend.public_ip
-                  }
-                  '''
-                  
-                  // Initialize terraform with a more robust approach to plugin caching
-                  sh '''
-                      # Ensure plugin cache directory exists with correct permissions
-                      mkdir -p $TF_PLUGIN_CACHE_DIR
-                      chmod 755 $TF_PLUGIN_CACHE_DIR
+                    resource "aws_instance" "frontend" {
+                      ami           = "ami-0c7217cdde317cfec"  # Ubuntu 22.04 LTS
+                      instance_type = "t2.micro"
+                      key_name      = "jenkins-key"
                       
-                      # Check if the AWS provider directory exists
-                      AWS_PROVIDER_DIR="$TF_PLUGIN_CACHE_DIR/registry.terraform.io/hashicorp/aws/5.93.0/linux_amd64"
-                      if [ -d "$AWS_PROVIDER_DIR" ]; then
-                          echo "AWS provider directory already exists. Checking if it's valid..."
-                          # If the directory is causing issues, try to fix it
-                          if [ ! -f "$AWS_PROVIDER_DIR/terraform-provider-aws_v5.93.0" ]; then
-                              echo "AWS provider directory exists but appears incomplete. Removing it..."
-                              rm -rf "$AWS_PROVIDER_DIR"
-                          fi
-                      fi
-                      
-                      # Try to initialize without explicit plugin caching
-                      cd terraform && terraform init -input=false -lock=false
-                  '''
-                  
-                  // Rest of your script with security group and instance checks
-                  script {
-                      // Continue with the existing script for checking security groups and instances
-                      // ...
-                  }
-              }
-          }
-      }
-              
-              stage('Test SSH Connection') {
-                  steps {
-                      sshagent([env.SSH_KEY_CREDENTIALS]) {
-                          sh """
-                              # Copy SSH key to a temporary location
-                              mkdir -p /tmp
-                              ssh-keygen -f "/var/lib/jenkins/.ssh/known_hosts" -R "${env.EC2_PUBLIC_IP}" || true
-                              
-                              # Test SSH connection with timeout and verbose output
-                              echo "Testing SSH connection to ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP}..."
-                              timeout 30 ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP} 'echo SSH connection successful'
-                          """
+                      tags = {
+                        Name = "coinxcel-frontend"
                       }
-                  }
-              }
+
+                      vpc_security_group_ids = [aws_security_group.frontend_sg.id]
+
+                      root_block_device {
+                        volume_size = 30
+                        volume_type = "gp2"
+                      }
+                    }
+
+                    resource "aws_security_group" "frontend_sg" {
+                      name        = "coinxcel-frontend-sg"
+                      description = "Security group for CoinXcel frontend"
+
+                      ingress {
+                        from_port   = 22
+                        to_port     = 22
+                        protocol    = "tcp"
+                        cidr_blocks = ["0.0.0.0/0"]
+                      }
+
+                      ingress {
+                        from_port   = 80
+                        to_port     = 80
+                        protocol    = "tcp"
+                        cidr_blocks = ["0.0.0.0/0"]
+                      }
+
+                      ingress {
+                        from_port   = 443
+                        to_port     = 443
+                        protocol    = "tcp"
+                        cidr_blocks = ["0.0.0.0/0"]
+                      }
+
+                      ingress {
+                        from_port   = 3000
+                        to_port     = 3000
+                        protocol    = "tcp"
+                        cidr_blocks = ["0.0.0.0/0"]
+                      }
+
+                      egress {
+                        from_port   = 0
+                        to_port     = 0
+                        protocol    = "-1"
+                        cidr_blocks = ["0.0.0.0/0"]
+                      }
+                    }
+
+                    output "frontend_public_ip" {
+                      value = aws_instance.frontend.public_ip
+                    }
+                    '''
+                    
+                    // Initialize terraform with fixed plugin caching approach
+                    sh '''
+                        # Ensure plugin cache directory exists with correct permissions
+                        mkdir -p $TF_PLUGIN_CACHE_DIR
+                        chmod 755 $TF_PLUGIN_CACHE_DIR
+                        
+                        # Check for existing provider directory
+                        AWS_PROVIDER_DIR="$TF_PLUGIN_CACHE_DIR/registry.terraform.io/hashicorp/aws/5.93.0/linux_amd64"
+                        if [ -d "$AWS_PROVIDER_DIR" ]; then
+                            echo "AWS provider directory exists. Checking if it needs to be cleaned..."
+                            if [ ! -f "$AWS_PROVIDER_DIR/terraform-provider-aws_v5.93.0" ]; then
+                                echo "AWS provider directory exists but may be incomplete. Removing it..."
+                                rm -rf "$AWS_PROVIDER_DIR"
+                            fi
+                        fi
+                        
+                        # Set environment variable for plugin caching instead of command-line flag
+                        export TF_PLUGIN_CACHE_DIR="$TF_PLUGIN_CACHE_DIR"
+                        cd terraform && terraform init -input=false -lock=false || {
+                            echo "First attempt failed, trying again without caching..."
+                            unset TF_PLUGIN_CACHE_DIR
+                            terraform init -input=false -lock=false
+                        }
+                    '''
+                    
+                    script {
+                        // First check for existing security group
+                        def existingSecurityGroupId = sh(
+                            script: '''
+                                aws ec2 describe-security-groups \
+                                --region ${AWS_DEFAULT_REGION} \
+                                --filters "Name=group-name,Values=coinxcel-frontend-sg" \
+                                --query "SecurityGroups[0].GroupId" \
+                                --output text
+                            ''',
+                            returnStdout: true
+                        ).trim()
+                        
+                        // If security group exists but not in state, import it
+                        if (existingSecurityGroupId != 'None' && existingSecurityGroupId != '') {
+                            echo "Found existing security group: ${existingSecurityGroupId}"
+                            def sgInState = sh(
+                                script: '''
+                                    cd terraform && terraform state list | grep aws_security_group.frontend_sg || echo "not_found"
+                                ''',
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (sgInState == "not_found") {
+                                echo "Importing existing security group into Terraform state..."
+                                sh "cd terraform && terraform import aws_security_group.frontend_sg ${existingSecurityGroupId} || echo 'Security group import failed but continuing'"
+                            } else {
+                                echo "Security group already in Terraform state"
+                            }
+                        }
+                        
+                        // Now check for existing EC2 instance
+                        def existingInstanceId = sh(
+                            script: '''
+                                aws ec2 describe-instances \
+                                --region ${AWS_DEFAULT_REGION} \
+                                --filters "Name=tag:Name,Values=coinxcel-frontend" "Name=instance-state-name,Values=running" \
+                                --query "Reservations[].Instances[].InstanceId" \
+                                --output text
+                            ''',
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (existingInstanceId != '') {
+                            echo "Found existing frontend instance: ${existingInstanceId}"
+                            def instanceInState = sh(
+                                script: '''
+                                    cd terraform && terraform state list | grep aws_instance.frontend || echo "not_found"
+                                ''',
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (instanceInState == "not_found") {
+                                echo "Importing existing instance into Terraform state..."
+                                sh "cd terraform && terraform import aws_instance.frontend ${existingInstanceId} || echo 'Import failed but continuing'"
+                            } else {
+                                echo "Instance already in Terraform state"
+                            }
+                        } else {
+                            echo "No existing frontend instance found. New instance will be created."
+                        }
+                        
+                        // Apply changes to ensure the infrastructure is up to date
+                        sh "cd terraform && terraform apply -auto-approve"
+                        
+                        // Get the EC2 public IP with error handling
+                        try {
+                            env.EC2_PUBLIC_IP = sh(
+                                script: 'cd terraform && terraform output -raw frontend_public_ip',
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (env.EC2_PUBLIC_IP == '') {
+                                error "Failed to get EC2 public IP address"
+                            }
+                            
+                            echo "Frontend EC2 Public IP: ${env.EC2_PUBLIC_IP}"
+                            
+                            // Update Ansible hosts file with the EC2 IP
+                            sh """
+                                # Create hosts file directly with the correct IP
+                                cat > ansible/hosts << EOF
+[frontend_servers]
+frontend ansible_host=${env.EC2_PUBLIC_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10'
+
+[frontend_servers:vars]
+ansible_python_interpreter=/usr/bin/python3
+EOF
+                                # Verify the hosts file content
+                                cat ansible/hosts
+                            """
+                        } catch (Exception e) {
+                            error "Failed to get or process EC2 public IP: ${e.message}"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Test SSH Connection') {
+            steps {
+                sshagent([env.SSH_KEY_CREDENTIALS]) {
+                    sh """
+                        # Copy SSH key to a temporary location
+                        mkdir -p /tmp
+                        ssh-keygen -f "/var/lib/jenkins/.ssh/known_hosts" -R "${env.EC2_PUBLIC_IP}" || true
+                        
+                        # Test SSH connection with timeout and verbose output
+                        echo "Testing SSH connection to ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP}..."
+                        timeout 30 ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${env.EC2_USERNAME}@${env.EC2_PUBLIC_IP} 'echo SSH connection successful'
+                    """
+                }
+            }
+        }
         
         stage('Deploy with Ansible') {
             steps {
