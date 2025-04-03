@@ -30,6 +30,9 @@ pipeline {
                 sh 'mkdir -p terraform ansible'
                 sh 'mkdir -p $TF_PLUGIN_CACHE_DIR'
                 
+                // List directory content to debug
+                sh 'ls -la'
+                
                 // Create Ansible playbooks and Dockerfile
                 writeFile file: 'Dockerfile', text: '''
 FROM node:20
@@ -183,32 +186,51 @@ ansible_python_interpreter=/usr/bin/python3
         group: ubuntu
         mode: '0644'
 
-    - name: Copy application files
-      copy:
-        src: "{{ item }}"
-        dest: /home/ubuntu/frontend/
-        owner: ubuntu
-        group: ubuntu
+    - name: Check if files exist before copying
+      stat:
+        path: "{{ item }}"
+      register: file_stats
+      delegate_to: localhost
       with_items:
         - ../package.json
         - ../package-lock.json
         - ../next.config.js
+        - ../next.config.ts
         - ../tsconfig.json
         - ../tailwind.config.ts
-
-    - name: Copy source code directories
+        - ../tailwind.config.js
+      
+    - name: Copy existing application files
       copy:
-        src: "../{{ item }}"
+        src: "{{ item.item }}"
         dest: /home/ubuntu/frontend/
         owner: ubuntu
         group: ubuntu
+      when: item.stat.exists
+      with_items: "{{ file_stats.results }}"
+
+    - name: Check if directories exist
+      stat:
+        path: "{{ item }}"
+      register: dir_stats
+      delegate_to: localhost
       with_items:
-        - app
-        - components
-        - public
-        - styles
-        - lib
-      ignore_errors: yes
+        - ../app
+        - ../components
+        - ../public
+        - ../styles
+        - ../lib
+        - ../src
+        - ../pages
+
+    - name: Copy existing source code directories
+      copy:
+        src: "{{ item.item }}"
+        dest: /home/ubuntu/frontend/
+        owner: ubuntu
+        group: ubuntu
+      when: item.stat.exists
+      with_items: "{{ dir_stats.results }}"
 
     - name: Create .env file with API URL
       copy:
@@ -218,6 +240,21 @@ ansible_python_interpreter=/usr/bin/python3
         owner: ubuntu
         group: ubuntu
         mode: '0644'
+        
+    - name: Create minimal next.config.js if it doesn't exist
+      copy:
+        content: |
+          const nextConfig = {
+            output: "standalone",
+            reactStrictMode: true,
+          };
+          
+          export default nextConfig;
+        dest: /home/ubuntu/frontend/next.config.js
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+        force: no
 
     - name: Create docker-compose.yml
       copy:
